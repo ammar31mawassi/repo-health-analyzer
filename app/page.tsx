@@ -15,16 +15,10 @@ import {
   XCircle
 } from "lucide-react";
 import type { BooleanSignal, GitHubAccountReport, RepoHealthReport, ScoreCheckStatus } from "@/src/types";
-
-type ApiResponse = {
-  report?: RepoHealthReport;
-  error?: string;
-};
-
-type AccountApiResponse = {
-  report?: GitHubAccountReport;
-  error?: string;
-};
+import { analyzeAccount as buildAccountReport } from "@/src/lib/accountAnalysis";
+import { parseGitHubAccountInput, parseGitHubRepoInput } from "@/src/lib/parseRepo";
+import { fetchPublicAccountRepoSnapshots, fetchPublicRepoSnapshot } from "@/src/lib/publicGithub";
+import { analyzeRepo } from "@/src/lib/scoring";
 
 export default function Home() {
   const [repo, setRepo] = useState("");
@@ -44,20 +38,9 @@ export default function Home() {
     setAccountReport(null);
 
     try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ repo: target })
-      });
-      const data = (await response.json()) as ApiResponse;
-
-      if (!response.ok || !data.report) {
-        throw new Error(data.error ?? "Could not analyze that repository.");
-      }
-
-      setReport(data.report);
+      const input = parseGitHubRepoInput(target);
+      const snapshot = await fetchPublicRepoSnapshot(input);
+      setReport(analyzeRepo(snapshot));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not analyze that repository.");
     } finally {
@@ -72,20 +55,9 @@ export default function Home() {
     setAccountReport(null);
 
     try {
-      const response = await fetch("/api/analyze-account", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ account: target })
-      });
-      const data = (await response.json()) as AccountApiResponse;
-
-      if (!response.ok || !data.report) {
-        throw new Error(data.error ?? "Could not analyze that GitHub account.");
-      }
-
-      setAccountReport(data.report);
+      const input = parseGitHubAccountInput(target);
+      const snapshots = await fetchPublicAccountRepoSnapshots(input);
+      setAccountReport(buildAccountReport(input, snapshots));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not analyze that GitHub account.");
     } finally {
@@ -115,7 +87,7 @@ export default function Home() {
     await runRepoAnalysis(repo);
   }
 
-  async function analyzeAccount() {
+  async function analyzeGitHubAccount() {
     await runAccountAnalysis(repo);
   }
 
@@ -125,7 +97,7 @@ export default function Home() {
     if (loadingMode === "account") {
       return {
         title: "Fetching public GitHub account signals",
-        body: "Every public repository is being scored. Larger accounts may take longer or need a GitHub token."
+        body: "Every public repository is being scored. Larger accounts may take longer or hit public API rate limits."
       };
     }
 
@@ -163,7 +135,7 @@ export default function Home() {
               <span>{loadingMode === "repo" ? "Analyzing" : "Analyze Repo"}</span>
             </button>
           </div>
-          <button className="ghost-button" type="button" onClick={analyzeAccount} disabled={loading}>
+          <button className="ghost-button" type="button" onClick={analyzeGitHubAccount} disabled={loading}>
             {loadingMode === "account" ? (
               <Loader2 className="spin" size={16} aria-hidden="true" />
             ) : (

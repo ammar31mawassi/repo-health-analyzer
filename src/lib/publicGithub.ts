@@ -10,7 +10,6 @@ type GitHubTreeResponse = {
     path: string;
     type: string;
   }>;
-  truncated?: boolean;
 };
 
 type GitHubContentItem = {
@@ -39,26 +38,26 @@ type RepositoryListResult = {
   apiDetailsAvailable: boolean;
 };
 
-export class GitHubApiError extends Error {
+export class PublicGitHubApiError extends Error {
   status: number;
 
   constructor(message: string, status: number) {
     super(message);
-    this.name = "GitHubApiError";
+    this.name = "PublicGitHubApiError";
     this.status = status;
   }
 }
 
-export async function fetchRepoSnapshot(input: ParsedRepoInput): Promise<RepoSnapshot> {
+export async function fetchPublicRepoSnapshot(input: ParsedRepoInput): Promise<RepoSnapshot> {
   const metadata = await fetchGitHubJson<GitHubRepository>(`/repos/${input.owner}/${input.repo}`);
   return fetchRepoSnapshotFromMetadata(input, metadata);
 }
 
-export async function fetchAccountRepoSnapshots(input: ParsedAccountInput): Promise<RepoSnapshot[]> {
+export async function fetchPublicAccountRepoSnapshots(input: ParsedAccountInput): Promise<RepoSnapshot[]> {
   const { repositories, apiDetailsAvailable } = await fetchPublicRepositories(input.username);
 
   if (repositories.length === 0) {
-    throw new GitHubApiError("No public repositories were found for that GitHub account.", 404);
+    throw new PublicGitHubApiError("No public repositories were found for that GitHub account.", 404);
   }
 
   return mapInBatches(repositories, 4, (repository) =>
@@ -114,7 +113,7 @@ async function fetchPublicRepositories(username: string): Promise<RepositoryList
 
     return { repositories, apiDetailsAvailable: true };
   } catch (error) {
-    if (!(error instanceof GitHubApiError) || error.status !== 403) {
+    if (!(error instanceof PublicGitHubApiError) || error.status !== 403) {
       throw error;
     }
   }
@@ -145,34 +144,13 @@ async function fetchReadme(owner: string, repo: string, branch: string, allowPar
   try {
     const response = await fetchGitHubJson<GitHubReadmeResponse>(`/repos/${owner}/${repo}/readme`);
     if (response.encoding !== "base64") return "";
-    return Buffer.from(response.content, "base64").toString("utf8");
+    return decodeBase64Utf8(response.content);
   } catch (error) {
     const rawReadme = await fetchRawReadme(owner, repo, branch);
     if (rawReadme) return rawReadme;
-    if (error instanceof GitHubApiError && (error.status === 404 || allowPartial)) return "";
+    if (error instanceof PublicGitHubApiError && (error.status === 404 || allowPartial)) return "";
     throw error;
   }
-}
-
-async function fetchRawReadme(owner: string, repo: string, branch: string): Promise<string> {
-  const candidates = ["README.md", "readme.md", "README.MD", "README"];
-
-  for (const fileName of candidates) {
-    try {
-      const response = await fetch(
-        `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(
-          branch
-        )}/${fileName}`,
-        { cache: "no-store" }
-      );
-
-      if (response.ok) return response.text();
-    } catch {
-      // Try the next common README file name.
-    }
-  }
-
-  return "";
 }
 
 async function fetchTreePaths(owner: string, repo: string, branch: string): Promise<string[]> {
@@ -211,43 +189,42 @@ async function fetchRecentCommits(owner: string, repo: string): Promise<RecentCo
   }
 }
 
+async function fetchRawReadme(owner: string, repo: string, branch: string): Promise<string> {
+  const candidates = ["README.md", "readme.md", "README.MD", "README"];
+
+  for (const fileName of candidates) {
+    try {
+      const response = await fetch(
+        `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(
+          branch
+        )}/${fileName}`,
+        { cache: "no-store" }
+      );
+
+      if (response.ok) return response.text();
+    } catch {
+      // Try the next common README file name.
+    }
+  }
+
+  return "";
+}
+
 async function fetchGitHubJson<T>(path: string): Promise<T> {
   const response = await fetch(`https://api.github.com${path}`, {
-    headers: githubHeaders(),
+    headers: {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    },
     cache: "no-store"
   });
 
   if (!response.ok) {
     const message = await safeGitHubErrorMessage(response);
-    throw new GitHubApiError(message, response.status);
+    throw new PublicGitHubApiError(message, response.status);
   }
 
   return (await response.json()) as T;
-}
-
-async function mapInBatches<T, R>(items: T[], batchSize: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = [];
-
-  for (let index = 0; index < items.length; index += batchSize) {
-    const batch = items.slice(index, index + batchSize);
-    results.push(...(await Promise.all(batch.map(mapper))));
-  }
-
-  return results;
-}
-
-function githubHeaders(): HeadersInit {
-  const headers: HeadersInit = {
-    Accept: "application/vnd.github+json",
-    "User-Agent": "repo-health-analyzer",
-    "X-GitHub-Api-Version": "2022-11-28"
-  };
-
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  }
-
-  return headers;
 }
 
 async function safeGitHubErrorMessage(response: Response): Promise<string> {
@@ -260,7 +237,24 @@ async function safeGitHubErrorMessage(response: Response): Promise<string> {
     apiMessage = "";
   }
 
-  if (response.status === 404) return `Repository was not found or is not public.${apiMessage}`;
-  if (response.status === 403) return `GitHub API rate limit or access limit was hit.${apiMessage}`;
+  if (response.status === 404) return `Repository or account was not found, or it is not public.${apiMessage}`;
+  if (response.status === 403) return `GitHub public API rate limit was hit. Try again later.${apiMessage}`;
   return `GitHub API request failed with status ${response.status}.${apiMessage}`;
+}
+
+function decodeBase64Utf8(value: string): string {
+  const binary = window.atob(value.replace(/\s/g, ""));
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+async function mapInBatches<T, R>(items: T[], batchSize: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+
+  for (let index = 0; index < items.length; index += batchSize) {
+    const batch = items.slice(index, index + batchSize);
+    results.push(...(await Promise.all(batch.map(mapper))));
+  }
+
+  return results;
 }

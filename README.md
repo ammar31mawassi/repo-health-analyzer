@@ -1,6 +1,6 @@
 # GitHub Repo Health Analyzer
 
-GitHub Repo Health Analyzer is a small Next.js app that checks whether public GitHub work is recruiter-readable. It accepts a repo URL, `owner/repo`, or a GitHub account name, fetches public GitHub signals, and returns explainable repo scores with strengths, gaps, improvement suggestions, a resume bullet draft, and a short LinkedIn summary draft.
+GitHub Repo Health Analyzer is a small Next.js app that checks whether public GitHub work is recruiter-readable. It accepts a repo URL, `owner/repo`, or a GitHub account name, fetches public GitHub signals directly from the browser, and returns explainable repo scores with strengths, gaps, improvement suggestions, a resume bullet draft, and a short LinkedIn summary draft.
 
 ## Why It Is Useful
 
@@ -14,14 +14,14 @@ Students often have real project work on GitHub, but recruiters need to understa
 - Recent activity
 - Repository structure and metadata
 
-The scoring is deterministic first. Optional AI suggestions can be enabled with an API key, but the demo works without secrets.
+The scoring is deterministic and explainable. The GitHub Pages deployment works without secrets, login, or a backend server.
 
 ## Tech Stack
 
 - Next.js App Router
 - TypeScript
 - React
-- GitHub public REST API
+- GitHub public REST API from the browser
 - Vitest for focused unit tests
 - GitHub Actions for CI
 
@@ -36,17 +36,22 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` if you want optional integrations:
+No environment variables are required. The app calls the public GitHub API from the browser, so it only analyzes public repositories and may be affected by GitHub's unauthenticated API rate limits.
 
-```bash
-GITHUB_TOKEN=
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4.1-mini
+## Deployment
+
+This project is configured for GitHub Pages.
+
+1. Push to the `main` branch.
+2. In GitHub, open **Settings > Pages**.
+3. Set **Source** to **GitHub Actions**.
+4. The `Deploy GitHub Pages` workflow builds the static site into `out/` and publishes it.
+
+Expected public URL:
+
+```text
+https://ammar31mawassi.github.io/repo-health-analyzer/
 ```
-
-- `GITHUB_TOKEN` is optional and only raises local GitHub API rate limits.
-- `OPENAI_API_KEY` is optional. If set, the app sends only the deterministic public-repo summary to OpenAI for three extra suggestions.
-- No secret is required for the basic demo.
 
 ## Example Repo To Test
 
@@ -128,5 +133,5 @@ npm run build
 - Account mode analyzes public repositories only
 - No login or database
 - No private repository access
-- No required AI key
+- No required API key
 - No dashboards, teams, or payments
